@@ -2,8 +2,9 @@
   "name": "trenchesbuybot",
   "version": "1.0.0",
   "dependencies": {
-    "axios": "^1.6.0",
+    "axios": "^1.11.0",
     "dotenv": "^17.2.0",
-    "puppeteer": "^24.5.0"
+    "puppeteer": "^24.5.0",
+    "twitter-api-v2": "^1.24.0"
   }
 }
