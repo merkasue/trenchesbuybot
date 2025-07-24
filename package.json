@@ -1,21 +1,9 @@
 {
-  "name": "nodejs",
+  "name": "trenchesbuybot",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "@types/node": "^22.13.11",
-    "axios": "^1.11.0",
-    "chrome-aws-lambda": "^1.20.1",
+    "axios": "^1.6.0",
     "dotenv": "^17.2.0",
-    "ethers": "^6.15.0",
-    "express": "^5.1.0",
-    "puppeteer-core": "^24.15.0"
+    "puppeteer": "^24.5.0"
   }
 }
