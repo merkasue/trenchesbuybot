@@ -1,105 +1,102 @@
-  // index.js
-  require('dotenv').config();
-  const axios     = require('axios');
-  const puppeteer = require('puppeteer');
-  const { fetchETHBuys } = require('./utils');
-  const config    = require('./config.json');
+// index.js
+require('dotenv').config();
+const axios       = require('axios');
+const { TwitterApi } = require('twitter-api-v2');
+const { fetchETHBuys } = require('./utils');
+const config      = require('./config.json');
 
-  // Threshold from env or config.json
-  const ETH_USD_THRESHOLD = parseFloat(process.env.ETH_THRESHOLD) || config.ethUsdThreshold;
+// --- Environment & Config ---
+const ETH_USD_THRESHOLD    = parseFloat(process.env.ETH_THRESHOLD) || config.ethUsdThreshold;
+const SPONSOR_LINE         = `Sponsored by: @${config.sponsorHandle}` +
+  (config.sponsorPhrase ? ` – ${config.sponsorPhrase}` : '');
 
-  // X credentials from env
-  const X_USERNAME = process.env.X_USERNAME;
-  const X_PASSWORD = process.env.X_PASSWORD;
+// Twitter API credentials (set these in your .env or host secrets)
+const client = new TwitterApi({
+  appKey:         process.env.TWITTER_API_KEY,
+  appSecret:      process.env.TWITTER_API_SECRET,
+  accessToken:    process.env.TWITTER_ACCESS_TOKEN,
+  accessSecret:   process.env.TWITTER_ACCESS_SECRET,
+});
 
-  // Global sponsor line
-  const SPONSOR_LINE = `Sponsored by: @${config.sponsorHandle}` +
-    (config.sponsorPhrase ? ` – ${config.sponsorPhrase}` : '');
+// Use the v2 client for tweeting
+const twitter = client.v2;
 
-  // Browser and page instances
-  let browser, page;
+// --- Helpers ---
 
-  // Helper: fetch the current ETH→USD price once per cycle
-  async function getEthPrice() {
-    const { data } = await axios.get(
-      'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd'
-    );
-    return data.ethereum.usd;
+// 1) Get ETH→USD spot price once per run
+async function getEthPrice() {
+  const { data } = await axios.get(
+    'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd'
+  );
+  return data.ethereum.usd;
+}
+
+// 2) Get market cap for an ERC20 via CoinGecko
+async function getMarketCap(contractAddress) {
+  try {
+    const url = `https://api.coingecko.com/api/v3/coins/ethereum/contract/${contractAddress}`;
+    const { data } = await axios.get(url);
+    return data.market_data.market_cap.usd || 0;
+  } catch (err) {
+    console.warn(`⚠️ Failed to fetch market cap for ${contractAddress}:`, err.message);
+    return 0;
   }
+}
 
-  // Initialize Puppeteer using the system Chromium
-  async function initX() {
-    browser = await puppeteer.launch({
-      headless: true,
-      executablePath: '/usr/bin/chromium-browser',
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-    page = await browser.newPage();
-    await page.goto('https://x.com/login', { waitUntil: 'networkidle2' });
-    await page.type('input[name="text"]', X_USERNAME);
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(2000);
-    await page.type('input[name="password"]', X_PASSWORD);
-    await page.keyboard.press('Enter');
-    await page.waitForNavigation({ waitUntil: 'networkidle2' });
-    console.log('✅ Logged in to X');
-  }
+// 3) Build the tweet text
+function buildTweet({ name, address }, buyValue, ethPrice, marketCap) {
+  const usdValue     = (buyValue * ethPrice).toFixed(2);
+  const capFormatted = marketCap >= 1e9
+    ? `$${(marketCap/1e9).toFixed(2)}B`
+    : marketCap >= 1e6
+      ? `$${(marketCap/1e6).toFixed(2)}M`
+      : `$${marketCap.toLocaleString()}`;
 
-  // Post a message to a given community slug
-  async function postToCommunity(slug, text) {
-    await page.goto(`https://x.com/i/communities/${slug}/home`, { waitUntil: 'networkidle2' });
-    await page.waitForSelector('[data-testid="tweetTextarea_0"]');
-    await page.click('[data-testid="tweetTextarea_0"]');
-    await page.keyboard.type(text);
-    await page.click('[data-testid="tweetButtonInline"]');
-    await page.waitForTimeout(2000);
-  }
+  return [
+    `🔥 Bought ${buyValue.toFixed(4)} ETH of **${name}** ($${usdValue})`,
+    `💰 Market Cap: ${capFormatted}`,
+    `🔗 Chart: https://dexscreener.com/ethereum/${address}`,
+    SPONSOR_LINE
+  ].join('\n\n');
+}
 
-  // Build the alert message for a buy
-  async function buildAlert(item, buy, ethPrice) {
-    const { name, address } = item.token;
-    const usdValue = (buy.value * ethPrice).toFixed(2);
-    return [
-      `🔥 Bought ${buy.value.toFixed(4)} ETH of **${name}** ($${usdValue})`,
-      `🔗 Chart: https://dexscreener.com/ethereum/${address}`,
-      SPONSOR_LINE
-    ].join('\n');
-  }
+// --- Main Loop ---
+async function runTracker() {
+  console.log(`\n⏱ Tracker run at ${new Date().toISOString()}`);
+  const ethPrice = await getEthPrice();
 
-  // Main tracking loop
-  async function runTracker() {
-    console.log(`\n⏱  Tracker run at ${new Date().toISOString()}`);
-    console.log(`🔍 ETH threshold: $${ETH_USD_THRESHOLD}`);
+  for (const { slug, token } of config.communities) {
+    console.log(`\n⏳ Checking ${token.name}…`);
+    try {
+      // fetch on‐chain buys
+      const buys = await fetchETHBuys(token.address);
 
-    const ethPrice = await getEthPrice();
+      // filter above threshold (in USD)
+      const largeBuys = buys.filter(b => (b.value * ethPrice) >= ETH_USD_THRESHOLD);
+      console.log(`✅ ${largeBuys.length} buys ≥ $${ETH_USD_THRESHOLD}`);
 
-    for (const item of config.communities) {
-      const { slug, token } = item;
-      console.log(`\n⏳ Checking ${token.name} in community "${slug}"…`);
+      if (!largeBuys.length) continue;
 
-      try {
-        // 1) Fetch ETH buys
-        const buys = await fetchETHBuys(token.address);
+      // fetch market cap once
+      const marketCap = await getMarketCap(token.address);
 
-        // 2) Filter by USD threshold
-        const largeBuys = buys.filter(b => (b.value * ethPrice) >= ETH_USD_THRESHOLD);
-        console.log(`✅ Found ${largeBuys.length} buys ≥ $${ETH_USD_THRESHOLD}`);
-
-        // 3) Post each
-        for (const b of largeBuys) {
-          const msg = await buildAlert(item, b, ethPrice);
-          console.log(`📝 Posting to ${slug}:`, msg.replace(/\n/g,' | '));
-          await postToCommunity(slug, msg);
-        }
-      } catch (err) {
-        console.error(`❌ Error for ${slug}:`, err.message);
+      // post each new buy
+      for (const b of largeBuys) {
+        const text = buildTweet(token, b.value, ethPrice, marketCap);
+        console.log(`📝 Tweeting:`, text.replace(/\n/g,' | '));
+        const res = await twitter.tweet(text);
+        console.log(`   ↪️ Tweet successful: https://x.com/i/web/status/${res.data.id}`);
       }
+    } catch (err) {
+      console.error(`❌ Error processing ${token.name}:`, err);
     }
   }
+}
 
-  // Bootstrap: login, then run every 30s
-  (async () => {
-    await initX();
-    await runTracker();
-    setInterval(runTracker, 30_000);
-  })();
+// --- Bootstrap ---
+(async () => {
+  // first run immediately
+  await runTracker();
+  // then every 30s
+  setInterval(runTracker, 30_000);
+})();
