@@ -1,0 +1,20 @@
+{
+  "communities": [
+    {
+      "slug": "PepeCommunity",
+      "token": {
+        "name": "Pepe",
+        "chain": "ethereum",
+        "address": "0x6982508145454ce325ddbe47a25d4ec3d2311933"
+      }
+    },
+    {
+      "slug": "BonkCommunity",
+      "token": {
+        "name": "Bonk",
+        "chain": "solana",
+        "poolSlug": "solana/BONK-USDC"
+      }
+    }
+  ]
+}
